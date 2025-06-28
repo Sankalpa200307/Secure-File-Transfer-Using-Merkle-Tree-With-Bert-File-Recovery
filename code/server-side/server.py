@@ -8,6 +8,7 @@ import os
 import csv
 import socket
 import datetime
+import base64
 from hashlib import sha256
 from cryptography.fernet import Fernet
 
@@ -26,25 +27,47 @@ KEY = 'epVKiOHn7J0sZcJ4-buWQ5ednv3csHdQHfvEKk0qVvk='
 # Function to encrypt data using Fernet symmetric encryption
 def encrypt_data(data):
     fernet = Fernet(KEY)
-    encMessage = fernet.encrypt(data.encode())
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    encMessage = fernet.encrypt(data)
     return encMessage
 
 # Function to decrypt data using Fernet symmetric encryption
 def decrypt_data(data):
     fernet = Fernet(KEY)
-    decMessage = fernet.decrypt(data.encode())
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    decMessage = fernet.decrypt(data)
     return decMessage
 
 # Function to break a file into chunks for building the merkle tree
 def chunk_file(file_path, chunk_size):
     chunks = []
-    with open(file_path, "r") as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if chunk:
-                chunks.append(chunk)
-            else:
-                break
+    try:
+        with open(file_path, "r", encoding='utf-8') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if chunk:
+                    chunks.append(chunk)
+                else:
+                    break
+    except UnicodeDecodeError:
+        try:
+            with open(file_path, "r", encoding='latin-1') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if chunk:
+                        chunks.append(chunk)
+                    else:
+                        break
+        except:
+            with open(file_path, "r", encoding='cp1252', errors='ignore') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if chunk:
+                        chunks.append(chunk)
+                    else:
+                        break
     return chunks
 
 # Function to create a Merkle tree from file chunks and 
@@ -65,45 +88,107 @@ def log_to_csv(log_data):
         writer = csv.writer(f)
         writer.writerow(log_data)
 
+# Function to send large data in chunks
+def send_large_data(conn, data):
+    # Send the length of data first
+    data_length = len(data)
+    conn.send(str(data_length).encode())
+    
+    # Wait for acknowledgment
+    conn.recv(1024)
+    
+    # Send data in chunks
+    chunk_size = 8192  # 8KB chunks
+    for i in range(0, len(data), chunk_size):
+        chunk = data[i:i + chunk_size]
+        conn.send(chunk)
+        # Wait for acknowledgment
+        conn.recv(1024)
+
+# Function to receive large data in chunks
+def receive_large_data(conn):
+    # Receive the length of data first
+    data_length = int(conn.recv(1024).decode())
+    conn.send(b"OK")  # Send acknowledgment
+    
+    # Receive data in chunks
+    received_data = b""
+    chunk_size = 8192  # 8KB chunks
+    
+    while len(received_data) < data_length:
+        chunk = conn.recv(min(chunk_size, data_length - len(received_data)))
+        if not chunk:
+            break
+        received_data += chunk
+        conn.send(b"OK")  # Send acknowledgment
+    
+    return received_data
+
 def upload_file(conn, addr):
-    # Receive the filename
-    filename = conn.recv(SIZE).decode()
-    print(f"Filename: {filename} received")
-    conn.send("filename recieved".encode()) # Acknowledgemt 
+    try:
+        # Create the received data directory if it doesn't exist
+        os.makedirs("Recieved data", exist_ok=True)
+        
+        # Receive the filename
+        filename = conn.recv(SIZE).decode()
+        print(f"Filename: {filename} received")
+        conn.send("filename recieved".encode()) # Acknowledgemt 
 
-    # Receive, decrypt the file data and store it in a file in the "Recieved data" 
-    # folder of the server with the filename
-    with open("Recieved data/"+ filename, 'wb') as f:
-        data = conn.recv(SIZE).decode()
-        f.write(decrypt_data(data))
+        # Receive, decrypt the file data and store it in a file in the "Recieved data" 
+        # folder of the server with the filename
+        encrypted_data_base64 = receive_large_data(conn).decode()
+        encrypted_data = base64.b64decode(encrypted_data_base64)
+        decrypted_data = decrypt_data(encrypted_data)
+        if isinstance(decrypted_data, bytes):
+            try:
+                decrypted_data = decrypted_data.decode('utf-8')
+            except UnicodeDecodeError:
+                # If UTF-8 fails, try other common encodings
+                try:
+                    decrypted_data = decrypted_data.decode('latin-1')
+                except:
+                    decrypted_data = decrypted_data.decode('cp1252', errors='ignore')
+        
+        with open("Recieved data/"+ filename, 'w', encoding='utf-8') as f:
+            f.write(decrypted_data)
 
-    # Receive the root hash value of the merkle tree created in the client
-    hash_val = conn.recv(SIZE).decode()
-    print(f"Hash value {hash_val}")
+        # Receive the root hash value of the merkle tree created in the client
+        hash_val = conn.recv(SIZE).decode()
+        print(f"Hash value {hash_val}")
 
-    # Create chunks from the received file and calculate the Merkle tree root hash
-    ch = chunk_file("Recieved data/"+ filename, 1024)
-    hash2 = merkle_tree(ch)
-    print(f"Hash value: {hash2}")
+        # Create chunks from the received file and calculate the Merkle tree root hash
+        ch = chunk_file("Recieved data/"+ filename, 1024)
+        hash2 = merkle_tree(ch)
+        print(f"Hash value: {hash2}")
 
-    # Compare the calculated hash with the received hash value
-    if hash2 == hash_val:
-        conn.send("True".encode())
-        log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Successful", ]
-        log_to_csv(log_data)
-        print('Your data is in good hands')
+        # Compare the calculated hash with the received hash value
+        if hash2 == hash_val:
+            conn.send("True".encode())
+            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Successful", ]
+            log_to_csv(log_data)
+            print('Your data is in good hands')
 
-    else:
-        conn.send("False".encode())
-        log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful" ]
-        log_to_csv(log_data)
-        print('Your data is not in good hands')
+        else:
+            conn.send("False".encode())
+            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful" ]
+            log_to_csv(log_data)
+            print('Your data is not in good hands')
 
-    # Once file transfer is done, a message to the client is sent regarding it
-    print(f"File Data Recieved")
-    conn.send("File data recieved".encode())
+        # Once file transfer is done, a message to the client is sent regarding it
+        print(f"File Data Recieved")
+        conn.send("File data recieved".encode())
+    except Exception as e:
+        print(f"Error in upload_file: {e}")
+        try:
+            conn.send("False".encode())
+            conn.send("Upload failed".encode())
+        except:
+            pass
 
 def download_file(conn, addr):
+    # Create the received data directory if it doesn't exist
+    os.makedirs("Recieved data", exist_ok=True)
+    
     # Receive the filename
     filename = conn.recv(SIZE).decode()
     print(f"Filename: {filename} received")
@@ -119,9 +204,21 @@ def download_file(conn, addr):
         print(msg)
 
         # Read, Encrypt and send the file data to the client
-        with open("Recieved data/"+ filename, 'r') as f:
-            data = f.read()
-            conn.send(encrypt_data(data))
+        try:
+            with open("Recieved data/"+ filename, 'r', encoding='utf-8') as f:
+                data = f.read()
+        except UnicodeDecodeError:
+            # If UTF-8 fails, try other encodings
+            try:
+                with open("Recieved data/"+ filename, 'r', encoding='latin-1') as f:
+                    data = f.read()
+            except:
+                with open("Recieved data/"+ filename, 'r', encoding='cp1252', errors='ignore') as f:
+                    data = f.read()
+        
+        encrypted_data = encrypt_data(data)
+        encrypted_data_base64 = base64.b64encode(encrypted_data).decode('utf-8')
+        send_large_data(conn, encrypted_data_base64.encode())
 
         # Create chunks from the file and calculate the Merkle tree root hash
         ch = chunk_file("Recieved data/"+filename, 1024)
@@ -139,6 +236,9 @@ def download_file(conn, addr):
         print("File does not exists")
 
 def show_files(conn, addr):
+    # Create the received data directory if it doesn't exist
+    os.makedirs("Recieved data", exist_ok=True)
+    
     files = []
     for f in os.listdir('./Recieved data'):
         if f.endswith(".txt"):
@@ -195,7 +295,7 @@ def main():
     return
 
 if __name__ == '__main__':
-    if  not os.path.exists("logs.csv"):
+    if not os.path.exists("logs.csv"):
         with open("logs.csv", mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(["Date","Timestamp", "Client Address", "Event", "Filename", "Status" ])
