@@ -1,0 +1,11 @@
+Nguyen Truong, Kai Sun, Siyao Wang, Florian Guitton, YiKe Guo,
+Privacy preservation in federated learning: An insightful survey from the GDPR perspective,
+Computers & Security,
+Volume 110,
+2021,
+102402,
+ISSN 0167-4048,
+https://doi.org/10.1016/j.cose.2021.102402.
+(https://www.sciencedirect.com/science/article/pii/S0167404821002261)
+Abstract: In recent years, along with the blooming of Machine Learning (ML)-based applications and services, ensuring data privacy and security have become a critical obligation. ML-based service providers not only confront with difficulties in collecting and managing data across heterogeneous sources but also challenges of complying with rigorous data protection regulations such as EU/UK General Data Protection Regulation (GDPR). Furthermore, conventional centralised ML approaches have always come with long-standing privacy risks to personal data leakage, misuse, and abuse. Federated learning (FL) has emerged as a prospective solution that facilitates distributed collaborative learning without disclosing original training data. Unfortunately, retaining data and computation on-device as in FL are not sufficient for privacy-guarantee because model parameters exchanged among participants conceal sensitive information that can be exploited in privacy attacks. Consequently, FL-based systems are not naturally compliant with the GDPR. This article is dedicated to surveying of state-of-the-art privacy-preservation techniques in FL in relations with GDPR requirements. Furthermore, insights into the existing challenges are examined along with the prospective approaches following the GDPR regulatory guidelines that FL-based systems shall implement to fully comply with the GDPR.
+Keywords: Federated learning; Data protection regulation; GDPR; Personal data; Privacy; Privacy preservation

@@ -2,6 +2,7 @@
 22AIE203 - DSA2 
 Merkle Tree Project
 By Amritha and Saran
+Enhanced with BERT-based text file recovery
 '''
 
 import os
@@ -11,6 +12,20 @@ import datetime
 import base64
 from hashlib import sha256
 from cryptography.fernet import Fernet
+import sys
+
+# Add the parent directory to path to import BERT integration
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Initialize BERT recovery system
+print("Initializing BERT-based file recovery system...")
+try:
+    from bert_integration import BERTRecoveryIntegration
+    bert_recovery = BERTRecoveryIntegration()
+    print("BERT recovery system initialized successfully")
+except Exception as e:
+    print(f"Warning: BERT initialization failed: {e}")
+    bert_recovery = None
 
 # Setting the IP address the server, needs to be set
 IP = socket.gethostbyname(socket.gethostname())
@@ -88,6 +103,23 @@ def log_to_csv(log_data):
         writer = csv.writer(f)
         writer.writerow(log_data)
 
+# Enhanced logging function for BERT operations
+def log_bert_operation(operation, filename, details, status):
+    """
+    Log BERT-related operations with enhanced details
+    """
+    timestamp = datetime.datetime.now()
+    log_data = [
+        str(timestamp.date()),
+        str(timestamp.time()),
+        "BERT_Operation",
+        operation,
+        filename,
+        status,
+        details
+    ]
+    log_to_csv(log_data)
+
 # Function to send large data in chunks
 def send_large_data(conn, data):
     # Send the length of data first
@@ -161,18 +193,82 @@ def upload_file(conn, addr):
         hash2 = merkle_tree(ch)
         print(f"Hash value: {hash2}")
 
-        # Compare the calculated hash with the received hash value
+        # Enhanced integrity check with BERT recovery
         if hash2 == hash_val:
+            # Integrity check passed - no corruption detected
             conn.send("True".encode())
-            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Successful", ]
+            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Successful", "No corruption detected"]
             log_to_csv(log_data)
-            print('Your data is in good hands')
-
+            print('✅ File integrity verified - no corruption detected')
         else:
-            conn.send("False".encode())
-            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful" ]
-            log_to_csv(log_data)
-            print('Your data is not in good hands')
+            # Integrity check failed - attempt BERT recovery
+            print(f"❌ Integrity check failed for {filename}")
+            print(f"   Expected hash: {hash_val}")
+            print(f"   Received hash: {hash2}")
+            print("🔄 Attempting BERT-based file recovery...")
+            
+            if bert_recovery is not None:
+                # Check if file is a supported format
+                if bert_recovery.is_text_file("Recieved data/"+ filename):
+                    file_info = bert_recovery.file_processor.get_file_info("Recieved data/"+ filename)
+                    file_type = file_info['extension'] if file_info else "unknown"
+                    print(f"📄 File {filename} is a supported format ({file_type}), attempting BERT recovery...")
+                    
+                    # Process corrupted file with BERT
+                    recovered_content = bert_recovery.recover_file("Recieved data/"+ filename)
+                    
+                    if recovered_content is not None:
+                        print(f"🔄 BERT recovery completed, verifying integrity...")
+                        
+                        # Recalculate hash with recovered data
+                        recovered_chunks = [recovered_content[i:i+1024] for i in range(0, len(recovered_content), 1024)]
+                        recovered_hash = merkle_tree(recovered_chunks)
+                        print(f"   Recovered hash: {recovered_hash}")
+                        
+                        if recovered_hash == hash_val:
+                            # Recovery successful
+                            with open("Recieved data/"+ filename, 'w', encoding='utf-8') as f:
+                                f.write(recovered_content)
+                            
+                            conn.send("True".encode())
+                            recovery_details = f"BERT recovery successful for {file_type} file - File restored to original integrity"
+                            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Successful", recovery_details]
+                            log_to_csv(log_data)
+                            log_bert_operation("Recovery", filename, recovery_details, "Successful")
+                            print(f'✅ BERT recovery successful! {file_type} file integrity restored.')
+                        else:
+                            # Recovery failed - hash still doesn't match
+                            conn.send("False".encode())
+                            recovery_details = f"BERT recovery failed for {file_type} file - Hash mismatch after recovery (Expected: {hash_val[:16]}..., Got: {recovered_hash[:16]}...)"
+                            log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful", recovery_details]
+                            log_to_csv(log_data)
+                            log_bert_operation("Recovery", filename, recovery_details, "Failed")
+                            print(f'❌ BERT recovery failed for {file_type} file - file may be severely corrupted.')
+                    else:
+                        # BERT recovery returned None
+                        conn.send("False".encode())
+                        recovery_details = f"BERT recovery failed for {file_type} file - Recovery process returned no content"
+                        log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful", recovery_details]
+                        log_to_csv(log_data)
+                        log_bert_operation("Recovery", filename, recovery_details, "Failed")
+                        print(f'❌ BERT recovery failed for {file_type} file - no content recovered.')
+                else:
+                    # File is not a supported format
+                    conn.send("False".encode())
+                    recovery_details = f"BERT recovery not applicable - File format not supported"
+                    log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful", recovery_details]
+                    log_to_csv(log_data)
+                    log_bert_operation("Recovery", filename, recovery_details, "Not Applicable")
+                    print(f'⚠️ BERT recovery not applicable - {filename} format not supported.')
+                    print(f'   Supported formats: {", ".join(bert_recovery.get_supported_formats())}')
+            else:
+                # BERT not available
+                conn.send("False".encode())
+                recovery_details = f"BERT recovery system not available"
+                log_data = [str(datetime.datetime.now().date()),str(datetime.datetime.now().time()), str(addr), "Upload", filename, "Unsuccessful", recovery_details]
+                log_to_csv(log_data)
+                log_bert_operation("Recovery", filename, recovery_details, "System Unavailable")
+                print('❌ BERT recovery system not available - file integrity cannot be restored.')
 
         # Once file transfer is done, a message to the client is sent regarding it
         print(f"File Data Recieved")
